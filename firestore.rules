@@ -1,0 +1,772 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default Deny Everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Global Hardened Primitives & Authoritative Role Helpers
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isBootstrapAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'nayaksushanth0@gmail.com';
+    }
+
+    function hasAdminClaim() {
+      return isSignedIn()
+        && (
+          request.auth.token.admin == true
+          || request.auth.token.isAdmin == true
+          || request.auth.token.role in [
+            'Admin', 'admin', 'ADMIN',
+            'super_admin', 'SUPER_ADMIN',
+            'municipal_admin', 'MUNICIPAL_ADMIN'
+          ]
+        );
+    }
+
+    function hasMunicipalClaim() {
+      return hasAdminClaim()
+        || (
+          isSignedIn()
+          && request.auth.token.role in [
+            'Municipal Officer', 'municipal_officer', 'MUNICIPAL_OFFICER', 'officer', 'OFFICER',
+            'Field Maintenance Team', 'field_maintenance_team', 'FIELD_MAINTENANCE_TEAM', 'field', 'FIELD'
+          ]
+        );
+    }
+
+    function adminDocExists() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function adminDocIsActive() {
+      let data = get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+      return (!('active' in data) || data.active == true)
+        && (!('status' in data) || data.status in ['Active', 'active', 'ACTIVE']);
+    }
+
+    function userDocExists() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDocData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userRole() {
+      return userDocData().role;
+    }
+
+    function userIsActive() {
+      let data = userDocData();
+      return (!('active' in data) || data.active == true)
+        && (!('status' in data) || data.status in ['Active', 'active', 'ACTIVE']);
+    }
+
+    function userHasAdminFlag() {
+      let data = userDocData();
+      return ('isAdmin' in data && data.isAdmin == true)
+        || ('admin' in data && data.admin == true)
+        || (
+          'role' in data && data.role in [
+            'Admin', 'admin', 'ADMIN',
+            'super_admin', 'SUPER_ADMIN',
+            'municipal_admin', 'MUNICIPAL_ADMIN'
+          ]
+        );
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || hasAdminClaim()
+        || (adminDocExists() && adminDocIsActive())
+        || (userDocExists() && userIsActive() && userHasAdminFlag());
+    }
+
+    function isMunicipalOfficer() {
+      return isAdmin()
+        || (
+          isSignedIn()
+          && request.auth.token.role in ['Municipal Officer', 'municipal_officer', 'MUNICIPAL_OFFICER', 'officer', 'OFFICER']
+        )
+        || (
+          userDocExists()
+          && userIsActive()
+          && 'role' in userDocData()
+          && userRole() in ['Municipal Officer', 'municipal_officer', 'MUNICIPAL_OFFICER', 'officer', 'OFFICER']
+        );
+    }
+
+    function isFieldTeam() {
+      return isMunicipalOfficer()
+        || hasMunicipalClaim()
+        || (
+          userDocExists()
+          && userIsActive()
+          && 'role' in userDocData()
+          && userRole() in ['Field Maintenance Team', 'field_maintenance_team', 'FIELD_MAINTENANCE_TEAM', 'field', 'FIELD']
+        );
+    }
+
+    function isAuthorizedMunicipalUser() {
+      return isFieldTeam();
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidDataSource(val) {
+      return val is string && val in ['LIVE_ESP32', 'SIMULATED_DEMO'];
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints (Anti-Update-Gap)
+    // =========================================================================
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'fullName', 'email', 'role', 'department', 'districtScope', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'fullName', 'email', 'role', 'department', 'districtScope', 'phone', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.role is string && data.role in ['Admin', 'Municipal Officer', 'Field Maintenance Team']
+        && data.department is string && data.department.size() >= 1 && data.department.size() <= 120
+        && data.districtScope is string && data.districtScope.size() >= 1 && data.districtScope.size() <= 120
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && data.status is string && data.status in ['Active', 'Suspended']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDevice(data, deviceId) {
+      return data.keys().hasAll([
+          'id', 'vehicleLabel', 'mountType', 'district', 'status', 'firmwareVersion',
+          'mpu6050Status', 'gpsFix', 'satellites', 'batteryVoltage', 'signalRssi',
+          'lat', 'lng', 'manualSosButtonState', 'dataSource', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'vehicleLabel', 'mountType', 'district', 'status', 'firmwareVersion',
+          'mpu6050Status', 'gpsFix', 'satellites', 'batteryVoltage', 'signalRssi',
+          'packetsToday', 'potholesDetectedToday', 'lat', 'lng', 'speedKmh',
+          'manualSosButtonState', 'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == deviceId && isValidId(data.id)
+        && data.vehicleLabel is string && data.vehicleLabel.size() >= 1 && data.vehicleLabel.size() <= 120
+        && data.mountType is string && data.mountType in ['Municipal Patrol Van', 'Public Transit Bus', 'Road Inspection Truck', 'Utility Fleet']
+        && data.district is string && data.district.size() >= 1 && data.district.size() <= 120
+        && data.status is string && data.status in ['Online', 'Degraded', 'Offline']
+        && data.firmwareVersion is string && data.firmwareVersion.size() >= 1 && data.firmwareVersion.size() <= 40
+        && data.mpu6050Status is string && data.mpu6050Status in ['Calibrated', 'Drift Warning', 'Fault']
+        && data.gpsFix is string && data.gpsFix in ['3D Fix', '2D Fix', 'No Fix']
+        && data.satellites is number && data.satellites >= 0 && data.satellites <= 64
+        && data.batteryVoltage is number && data.batteryVoltage >= 0 && data.batteryVoltage <= 48
+        && data.signalRssi is number && data.signalRssi >= -140 && data.signalRssi <= 0
+        && (!('packetsToday' in data) || (data.packetsToday is number && data.packetsToday >= 0))
+        && (!('potholesDetectedToday' in data) || (data.potholesDetectedToday is number && data.potholesDetectedToday >= 0))
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && (!('speedKmh' in data) || (data.speedKmh is number && data.speedKmh >= 0 && data.speedKmh <= 250))
+        && data.manualSosButtonState is string && data.manualSosButtonState in ['Armed', 'Triggered']
+        && isValidDataSource(data.dataSource)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPotholeEvent(data, eventId) {
+      return data.keys().hasAll([
+          'id', 'roadName', 'segmentCode', 'district', 'arterialClass', 'lat', 'lng',
+          'classification', 'severity', 'status', 'priorityScore', 'priorityTier',
+          'deviceId', 'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'roadName', 'segmentCode', 'district', 'arterialClass', 'lat', 'lng',
+          'h3Index', 'clusterId', 'classification', 'severity', 'status', 'priorityScore',
+          'priorityTier', 'deviceId', 'peakAccelG', 'rmsVibration', 'iriScore',
+          'mlConfidence', 'detectionCount', 'assignedWorkOrderId', 'notes',
+          'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == eventId && isValidId(data.id)
+        && data.roadName is string && data.roadName.size() >= 1 && data.roadName.size() <= 160
+        && data.segmentCode is string && data.segmentCode.size() >= 1 && data.segmentCode.size() <= 64
+        && data.district is string && data.district.size() >= 1 && data.district.size() <= 120
+        && data.arterialClass is string && data.arterialClass in ['Arterial', 'Collector', 'Local', 'Highway']
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && (!('h3Index' in data) || (data.h3Index is string && data.h3Index.size() <= 32))
+        && (!('clusterId' in data) || data.clusterId == null || (data.clusterId is string && data.clusterId.size() <= 64))
+        && data.classification is string && data.classification == 'Pothole'
+        && data.severity is string && data.severity in ['Critical', 'High', 'Moderate']
+        && data.status is string && data.status in ['Detected', 'Verified', 'Scheduled', 'In Progress', 'Repaired']
+        && data.priorityScore is number && data.priorityScore >= 0 && data.priorityScore <= 100
+        && data.priorityTier is string && data.priorityTier in ['P1', 'P2', 'P3']
+        && data.deviceId is string && data.deviceId.size() >= 1 && data.deviceId.size() <= 64
+        && (!('peakAccelG' in data) || (data.peakAccelG is number && data.peakAccelG >= 0 && data.peakAccelG <= 30))
+        && (!('rmsVibration' in data) || (data.rmsVibration is number && data.rmsVibration >= 0 && data.rmsVibration <= 50))
+        && (!('iriScore' in data) || (data.iriScore is number && data.iriScore >= 0 && data.iriScore <= 30))
+        && (!('mlConfidence' in data) || (data.mlConfidence is number && data.mlConfidence >= 0 && data.mlConfidence <= 100))
+        && (!('detectionCount' in data) || (data.detectionCount is number && data.detectionCount >= 1))
+        && (!('assignedWorkOrderId' in data) || data.assignedWorkOrderId == null || (data.assignedWorkOrderId is string && data.assignedWorkOrderId.size() <= 64))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && isValidDataSource(data.dataSource)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCluster(data, clusterId) {
+      return data.keys().hasAll([
+          'id', 'name', 'district', 'centroidLat', 'centroidLng', 'radiusMeters',
+          'potholeCount', 'priorityScore', 'riskTier', 'dataSource', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'district', 'centroidLat', 'centroidLng', 'radiusMeters',
+          'potholeIds', 'potholeCount', 'criticalCount', 'avgIri', 'maxPeakG',
+          'priorityScore', 'riskTier', 'dataSource', 'updatedAt'
+        ])
+        && data.id is string && data.id == clusterId && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && data.district is string && data.district.size() >= 1 && data.district.size() <= 120
+        && data.centroidLat is number && data.centroidLat >= -90 && data.centroidLat <= 90
+        && data.centroidLng is number && data.centroidLng >= -180 && data.centroidLng <= 180
+        && data.radiusMeters is number && data.radiusMeters > 0 && data.radiusMeters <= 10000
+        && (!('potholeIds' in data) || (data.potholeIds is list && data.potholeIds.size() <= 200 && (data.potholeIds.size() == 0 || data.potholeIds[0] is string)))
+        && data.potholeCount is number && data.potholeCount >= 0
+        && (!('criticalCount' in data) || (data.criticalCount is number && data.criticalCount >= 0))
+        && (!('avgIri' in data) || (data.avgIri is number && data.avgIri >= 0))
+        && (!('maxPeakG' in data) || (data.maxPeakG is number && data.maxPeakG >= 0))
+        && data.priorityScore is number && data.priorityScore >= 0 && data.priorityScore <= 100
+        && data.riskTier is string && data.riskTier in ['Critical', 'High', 'Moderate']
+        && isValidDataSource(data.dataSource)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMunicipalZone(data, zoneId) {
+      return data.keys().hasAll([
+          'id', 'name', 'code', 'slaCriticalHours', 'slaHighHours', 'targetIriMax', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'code', 'slaCriticalHours', 'slaHighHours', 'targetIriMax', 'roadKmMonitored', 'updatedAt'
+        ])
+        && data.id is string && data.id == zoneId && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 32
+        && data.slaCriticalHours is number && data.slaCriticalHours >= 1 && data.slaCriticalHours <= 720
+        && data.slaHighHours is number && data.slaHighHours >= 1 && data.slaHighHours <= 1440
+        && data.targetIriMax is number && data.targetIriMax > 0 && data.targetIriMax <= 20
+        && (!('roadKmMonitored' in data) || (data.roadKmMonitored is number && data.roadKmMonitored >= 0))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMaintenanceTeam(data, teamId) {
+      return data.keys().hasAll([
+          'id', 'name', 'leadEngineer', 'district', 'status', 'vehicleUnit',
+          'membersCount', 'contactRadio', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'leadEngineer', 'district', 'status', 'vehicleUnit',
+          'activeOrderCount', 'membersCount', 'contactRadio', 'updatedAt'
+        ])
+        && data.id is string && data.id == teamId && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.leadEngineer is string && data.leadEngineer.size() >= 1 && data.leadEngineer.size() <= 120
+        && data.district is string && data.district.size() >= 1 && data.district.size() <= 120
+        && data.status is string && data.status in ['Available', 'Dispatched', 'On Site', 'Off Shift']
+        && data.vehicleUnit is string && data.vehicleUnit.size() >= 1 && data.vehicleUnit.size() <= 64
+        && (!('activeOrderCount' in data) || (data.activeOrderCount is number && data.activeOrderCount >= 0))
+        && data.membersCount is number && data.membersCount >= 1 && data.membersCount <= 50
+        && data.contactRadio is string && data.contactRadio.size() >= 1 && data.contactRadio.size() <= 64
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRepairTask(data, taskId) {
+      return data.keys().hasAll([
+          'id', 'title', 'roadName', 'district', 'priority', 'status',
+          'estimatedAsphaltTons', 'estimatedCostUsd', 'dataSource', 'createdBy',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'title', 'roadName', 'district', 'potholeIds', 'clusterId',
+          'priority', 'status', 'assignedCrewId', 'scheduledDate', 'slaDeadline',
+          'completedAt', 'estimatedAsphaltTons', 'estimatedCostUsd', 'notes',
+          'dataSource', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == taskId && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 180
+        && data.roadName is string && data.roadName.size() >= 1 && data.roadName.size() <= 160
+        && data.district is string && data.district.size() >= 1 && data.district.size() <= 120
+        && (!('potholeIds' in data) || (data.potholeIds is list && data.potholeIds.size() <= 50 && (data.potholeIds.size() == 0 || data.potholeIds[0] is string)))
+        && (!('clusterId' in data) || data.clusterId == null || (data.clusterId is string && data.clusterId.size() <= 64))
+        && data.priority is string && data.priority in ['P1', 'P2', 'P3']
+        && data.status is string && data.status in ['Queued', 'Dispatched', 'In Progress', 'Verification', 'Completed']
+        && (!('assignedCrewId' in data) || data.assignedCrewId == null || (data.assignedCrewId is string && data.assignedCrewId.size() <= 64))
+        && (!('scheduledDate' in data) || (data.scheduledDate is string && data.scheduledDate.size() <= 64))
+        && (!('slaDeadline' in data) || (data.slaDeadline is string && data.slaDeadline.size() <= 64))
+        && (!('completedAt' in data) || data.completedAt == null || (data.completedAt is string && data.completedAt.size() <= 64))
+        && data.estimatedAsphaltTons is number && data.estimatedAsphaltTons >= 0 && data.estimatedAsphaltTons <= 500
+        && data.estimatedCostUsd is number && data.estimatedCostUsd >= 0 && data.estimatedCostUsd <= 5000000
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && isValidDataSource(data.dataSource)
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRepairHistory(data, historyId) {
+      return data.keys().hasAll([
+          'id', 'taskId', 'previousStatus', 'newStatus', 'actorUid', 'actorName', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'taskId', 'previousStatus', 'newStatus', 'actorUid', 'actorName',
+          'notes', 'postRepairIri', 'createdAt'
+        ])
+        && data.id is string && data.id == historyId && isValidId(data.id)
+        && data.taskId is string && isValidId(data.taskId)
+        && data.previousStatus is string && data.previousStatus.size() >= 1 && data.previousStatus.size() <= 40
+        && data.newStatus is string && data.newStatus.size() >= 1 && data.newStatus.size() <= 40
+        && data.actorUid is string && data.actorUid == request.auth.uid
+        && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && (!('postRepairIri' in data) || (data.postRepairIri is number && data.postRepairIri >= 0 && data.postRepairIri <= 30))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSosAlert(data, alertId) {
+      return data.keys().hasAll([
+          'id', 'isManualSos', 'title', 'message', 'status', 'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'isManualSos', 'title', 'message', 'deviceId', 'roadName',
+          'operatorName', 'lat', 'lng', 'status', 'acknowledgedBy', 'acknowledgedAt',
+          'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == alertId && isValidId(data.id)
+        && data.isManualSos is bool && data.isManualSos == true
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 1000
+        && (!('deviceId' in data) || data.deviceId == null || (data.deviceId is string && data.deviceId.size() <= 64))
+        && (!('roadName' in data) || data.roadName == null || (data.roadName is string && data.roadName.size() <= 160))
+        && (!('operatorName' in data) || data.operatorName == null || (data.operatorName is string && data.operatorName.size() <= 120))
+        && (!('lat' in data) || data.lat == null || (data.lat is number && data.lat >= -90 && data.lat <= 90))
+        && (!('lng' in data) || data.lng == null || (data.lng is number && data.lng >= -180 && data.lng <= 180))
+        && data.status is string && data.status in ['Active', 'Acknowledged', 'Resolved']
+        && (!('acknowledgedBy' in data) || data.acknowledgedBy == null || (data.acknowledgedBy is string && data.acknowledgedBy.size() <= 120))
+        && (!('acknowledgedAt' in data) || data.acknowledgedAt == null || (data.acknowledgedAt is string && data.acknowledgedAt.size() <= 64))
+        && isValidDataSource(data.dataSource)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data, notificationId) {
+      return data.keys().hasAll([
+          'id', 'category', 'severity', 'title', 'message', 'status', 'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'category', 'severity', 'title', 'message', 'deviceId', 'potholeId',
+          'lat', 'lng', 'roadName', 'status', 'acknowledgedBy', 'acknowledgedAt',
+          'dataSource', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == notificationId && isValidId(data.id)
+        && data.category is string && data.category in ['CRITICAL_POTHOLE', 'HOTSPOT_THRESHOLD', 'SLA_BREACH', 'DEVICE_FAULT']
+        && data.severity is string && data.severity in ['Critical', 'High', 'Moderate', 'Info']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 1000
+        && (!('deviceId' in data) || data.deviceId == null || (data.deviceId is string && data.deviceId.size() <= 64))
+        && (!('potholeId' in data) || data.potholeId == null || (data.potholeId is string && data.potholeId.size() <= 64))
+        && (!('lat' in data) || data.lat == null || (data.lat is number && data.lat >= -90 && data.lat <= 90))
+        && (!('lng' in data) || data.lng == null || (data.lng is number && data.lng >= -180 && data.lng <= 180))
+        && (!('roadName' in data) || data.roadName == null || (data.roadName is string && data.roadName.size() <= 160))
+        && data.status is string && data.status in ['Active', 'Acknowledged', 'Resolved']
+        && (!('acknowledgedBy' in data) || data.acknowledgedBy == null || (data.acknowledgedBy is string && data.acknowledgedBy.size() <= 120))
+        && (!('acknowledgedAt' in data) || data.acknowledgedAt == null || (data.acknowledgedAt is string && data.acknowledgedAt.size() <= 64))
+        && isValidDataSource(data.dataSource)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // 1. users — PII Isolated, Zero Self-Role Escalation
+    // =========================================================================
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      // Users can create ONLY their own profile with least-privilege role 'Field Maintenance Team'
+      // Admins can create accounts with any valid role.
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isOwner(userId)
+            && incoming().email == request.auth.token.email
+            && incoming().role == 'Field Maintenance Team'
+            && incoming().status == 'Active'
+          )
+        );
+
+      // Users can ONLY update non-privileged profile fields; NEVER role or status.
+      // Only Admins can update role or status.
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'role', 'department', 'districtScope', 'phone', 'status', 'updatedAt']))
+          || (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'department', 'districtScope', 'phone', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // =========================================================================
+    // 1b. admins — Backend-Managed Municipal Administrator Registry
+    // =========================================================================
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && (isOwner(adminId) || isAdmin());
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 2. devices — ESP32 + MPU6050 + GPS Fleet (Backend Admin SDK Writes Only)
+    // =========================================================================
+    match /devices/{deviceId} {
+      allow get, list: if isAuthorizedMunicipalUser();
+      allow create, update, delete: if false;
+    }
+
+    // =========================================================================
+    // 3. pothole_events — Validated Pothole-Only Workflow
+    // =========================================================================
+    match /pothole_events/{eventId} {
+      allow get: if isSignedIn() && isValidId(eventId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(eventId)
+        && isValidPotholeEvent(incoming(), eventId)
+        && incoming().dataSource == 'SIMULATED_DEMO'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isMunicipalOfficer();
+      allow update: if isSignedIn()
+        && isValidId(eventId)
+        && isValidPotholeEvent(incoming(), eventId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().classification == existing().classification
+        && incoming().dataSource == existing().dataSource
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'severity', 'status', 'priorityScore', 'priorityTier', 'clusterId',
+            'h3Index', 'assignedWorkOrderId', 'notes', 'detectionCount', 'updatedAt'
+          ]))
+          || (isMunicipalOfficer() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'severity', 'status', 'priorityScore', 'priorityTier', 'clusterId',
+            'h3Index', 'assignedWorkOrderId', 'notes', 'updatedAt'
+          ]))
+          || (isFieldTeam() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'notes', 'updatedAt'
+          ]))
+        );
+      allow delete: if isAdmin() && isValidId(eventId);
+    }
+
+    // =========================================================================
+    // 4. pothole_clusters — DBSCAN Hotspot Corridors
+    // =========================================================================
+    match /pothole_clusters/{clusterId} {
+      allow get: if isSignedIn() && isValidId(clusterId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(clusterId)
+        && isValidCluster(incoming(), clusterId)
+        && incoming().updatedAt == request.time
+        && isMunicipalOfficer();
+      allow update: if isSignedIn()
+        && isValidId(clusterId)
+        && isValidCluster(incoming(), clusterId)
+        && incoming().id == existing().id
+        && incoming().updatedAt == request.time
+        && isMunicipalOfficer()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'district', 'centroidLat', 'centroidLng', 'radiusMeters',
+          'potholeIds', 'potholeCount', 'criticalCount', 'avgIri', 'maxPeakG',
+          'priorityScore', 'riskTier', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(clusterId);
+    }
+
+    // =========================================================================
+    // 5. municipal_zones — Municipal Wards & SLA Policies
+    // =========================================================================
+    match /municipal_zones/{zoneId} {
+      allow get: if isSignedIn() && isValidId(zoneId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(zoneId)
+        && isValidMunicipalZone(incoming(), zoneId)
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isSignedIn()
+        && isValidId(zoneId)
+        && isValidMunicipalZone(incoming(), zoneId)
+        && incoming().id == existing().id
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'code', 'slaCriticalHours', 'slaHighHours', 'targetIriMax', 'roadKmMonitored', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(zoneId);
+    }
+
+    // =========================================================================
+    // 6. maintenance_teams — Field Crews Roster
+    // =========================================================================
+    match /maintenance_teams/{teamId} {
+      allow get: if isSignedIn() && isValidId(teamId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(teamId)
+        && isValidMaintenanceTeam(incoming(), teamId)
+        && incoming().updatedAt == request.time
+        && isMunicipalOfficer();
+      allow update: if isSignedIn()
+        && isValidId(teamId)
+        && isValidMaintenanceTeam(incoming(), teamId)
+        && incoming().id == existing().id
+        && incoming().updatedAt == request.time
+        && (
+          (isMunicipalOfficer() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'leadEngineer', 'district', 'status', 'vehicleUnit',
+            'activeOrderCount', 'membersCount', 'contactRadio', 'updatedAt'
+          ]))
+          || (isFieldTeam() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isAdmin() && isValidId(teamId);
+    }
+
+    // =========================================================================
+    // 7. repair_tasks — Work Orders with Tiered RBAC & Terminal State Lock
+    // =========================================================================
+    match /repair_tasks/{taskId} {
+      allow get: if isSignedIn() && isValidId(taskId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(taskId)
+        && isValidRepairTask(incoming(), taskId)
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isMunicipalOfficer();
+      allow update: if isSignedIn()
+        && isValidId(taskId)
+        && isValidRepairTask(incoming(), taskId)
+        && incoming().id == existing().id
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().dataSource == existing().dataSource
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'roadName', 'district', 'potholeIds', 'clusterId',
+            'priority', 'status', 'assignedCrewId', 'scheduledDate',
+            'slaDeadline', 'completedAt', 'estimatedAsphaltTons',
+            'estimatedCostUsd', 'notes', 'updatedAt'
+          ]))
+          || (
+            existing().status != 'Completed'
+            && isMunicipalOfficer()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'priority', 'status', 'assignedCrewId', 'scheduledDate',
+              'slaDeadline', 'completedAt', 'notes', 'updatedAt'
+            ])
+          )
+          || (
+            existing().status != 'Completed'
+            && isFieldTeam()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'completedAt', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(taskId);
+    }
+
+    // =========================================================================
+    // 8. repair_history — Immutable Audit Log
+    // =========================================================================
+    match /repair_history/{historyId} {
+      allow get: if isSignedIn() && isValidId(historyId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(historyId)
+        && isValidRepairHistory(incoming(), historyId)
+        && incoming().createdAt == request.time
+        && isFieldTeam()
+        && exists(/databases/$(database)/documents/repair_tasks/$(incoming().taskId));
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // 9. sos_alerts — Independent Physical Manual SOS Channel
+    // =========================================================================
+    match /sos_alerts/{alertId} {
+      allow get: if isSignedIn() && isValidId(alertId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(alertId)
+        && isValidSosAlert(incoming(), alertId)
+        && incoming().dataSource == 'SIMULATED_DEMO'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isFieldTeam();
+      allow update: if isSignedIn()
+        && isValidId(alertId)
+        && isValidSosAlert(incoming(), alertId)
+        && incoming().id == existing().id
+        && incoming().isManualSos == existing().isManualSos
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'acknowledgedBy', 'acknowledgedAt', 'updatedAt'
+          ]))
+          || (
+            existing().status != 'Resolved'
+            && isMunicipalOfficer()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'acknowledgedBy', 'acknowledgedAt', 'updatedAt'
+            ])
+          )
+          || (
+            existing().status == 'Active'
+            && incoming().status == 'Acknowledged'
+            && isFieldTeam()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'acknowledgedBy', 'acknowledgedAt', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(alertId);
+    }
+
+    // =========================================================================
+    // 10. notifications — Automated Hazard, Hotspot, SLA & Device Alerts
+    // =========================================================================
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && isValidId(notificationId) && isFieldTeam();
+      allow list: if isSignedIn() && isFieldTeam();
+      allow create: if isSignedIn()
+        && isValidId(notificationId)
+        && isValidNotification(incoming(), notificationId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isMunicipalOfficer();
+      allow update: if isSignedIn()
+        && isValidId(notificationId)
+        && isValidNotification(incoming(), notificationId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isFieldTeam()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'acknowledgedBy', 'acknowledgedAt', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(notificationId);
+    }
+
+    // =========================================================================
+    // 11. Live ESP32 & Backend Telemetry Collections
+    //     - Written strictly by the Node.js Backend via Firebase Admin SDK
+    //       (Admin SDK bypasses security rules).
+    //     - Authenticated, authorized municipal users may read pothole-related
+    //       collections. Public access is strictly denied.
+    //     - Municipal users cannot create/delete device records or overwrite
+    //       ESP32 sensor/GPS payload fields.
+    // =========================================================================
+    match /sensor_detections/{detectionId} {
+      allow get, list: if isAuthorizedMunicipalUser();
+      allow create, update, delete: if false;
+    }
+
+    match /potholes/{potholeId} {
+      allow get, list: if isAuthorizedMunicipalUser();
+      allow create, delete: if false;
+      allow update: if isAuthorizedMunicipalUser()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status',
+          'repair_status',
+          'severity',
+          'verified',
+          'isVerified',
+          'is_verified',
+          'notes',
+          'assignedWorkOrderId',
+          'updatedAt',
+          'updated_at'
+        ]);
+    }
+
+    match /device_alerts/{alertId} {
+      allow get, list: if isAuthorizedMunicipalUser();
+      allow create, delete: if false;
+      allow update: if isAuthorizedMunicipalUser()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status',
+          'acknowledgedBy',
+          'acknowledged_by',
+          'acknowledgedAt',
+          'acknowledged_at',
+          'updatedAt',
+          'updated_at'
+        ]);
+    }
+
+    // Legacy backend diagnostic collections: retained in Firestore for backend
+    // Admin SDK use only — not exposed to municipal frontend clients.
+    match /incomplete_detections/{detectionId} {
+      allow read, write: if false;
+    }
+
+    match /rejected_detections/{detectionId} {
+      allow read, write: if false;
+    }
+  }
+}

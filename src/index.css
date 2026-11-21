@@ -1,0 +1,419 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@theme {
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Municipal Neumorphism (Soft UI) Core Palette */
+  --color-canvas: #E9EDF3;
+  --color-panel: #EEF2F7;
+  --color-recessed: #E2E7F0;
+  --color-ink: #17243A;
+  --color-muted: #718096;
+  --color-border-struct: rgba(255, 255, 255, 0.65);
+  --color-border-control: rgba(163, 177, 198, 0.35);
+
+  --color-municipal: #356AE6;
+  --color-municipal-hover: #2857C8;
+  --color-telemetry: #0F8B8D;
+  --color-critical: #DC2626;
+  --color-high: #EA580C;
+  --color-moderate: #D97706;
+  --color-repaired: #1E9E63;
+}
+
+:root {
+  --neu-bg: #E9EDF3;
+  --neu-surface: #EEF2F7;
+  --neu-surface-bright: #F4F7FB;
+  --neu-recessed: #E3E8F1;
+  --neu-ink: #17243A;
+  --neu-slate: #52627A;
+  --neu-muted: #718096;
+  --neu-accent: #356AE6;
+  --neu-accent-dark: #2756C5;
+
+  /* Calibrated Dual-Direction Soft Shadows */
+  --neu-shadow-raised: 6px 6px 14px rgba(163, 177, 198, 0.52), -6px -6px 14px rgba(255, 255, 255, 0.88);
+  --neu-shadow-raised-sm: 4px 4px 9px rgba(163, 177, 198, 0.48), -4px -4px 9px rgba(255, 255, 255, 0.86);
+  --neu-shadow-raised-lg: 10px 10px 22px rgba(155, 170, 192, 0.56), -10px -10px 22px rgba(255, 255, 255, 0.92);
+  --neu-shadow-hover: 8px 8px 18px rgba(155, 170, 192, 0.58), -8px -8px 18px rgba(255, 255, 255, 0.94);
+  --neu-shadow-inset: inset 4px 4px 9px rgba(163, 177, 198, 0.48), inset -4px -4px 9px rgba(255, 255, 255, 0.88);
+  --neu-shadow-inset-sm: inset 2.5px 2.5px 6px rgba(163, 177, 198, 0.45), inset -2.5px -2.5px 6px rgba(255, 255, 255, 0.85);
+  --neu-shadow-primary: 4px 4px 10px rgba(53, 106, 230, 0.34), -3px -3px 8px rgba(255, 255, 255, 0.72);
+  --neu-shadow-primary-hover: 6px 6px 14px rgba(53, 106, 230, 0.42), -3px -3px 9px rgba(255, 255, 255, 0.78);
+  --neu-shadow-primary-pressed: inset 3px 3px 7px rgba(24, 58, 145, 0.45), inset -2px -2px 6px rgba(114, 158, 255, 0.38);
+  --neu-shadow-danger: 4px 4px 10px rgba(220, 38, 38, 0.28), -3px -3px 8px rgba(255, 255, 255, 0.72);
+  --neu-focus-ring: 0 0 0 3px rgba(53, 106, 230, 0.24);
+}
+
+@layer base {
+  html,
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--neu-bg);
+    color: var(--neu-ink);
+    font-size: 13px;
+    line-height: 19px;
+  }
+
+  .font-mono,
+  .tabular-data {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  a:focus-visible {
+    outline: none;
+    box-shadow: var(--neu-focus-ring);
+  }
+}
+
+/* ============================================================================
+ * TERRA Track Neumorphic (Soft UI) Surface & Control Primitives
+ * ============================================================================ */
+
+/* Primary Raised Panel / Card */
+.neu-card {
+  background: var(--neu-surface);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow: var(--neu-shadow-raised);
+  transition: box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease;
+}
+
+.neu-card-interactive {
+  background: var(--neu-surface);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: var(--neu-shadow-raised);
+  transition: box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease;
+}
+
+.neu-card-interactive:hover {
+  background: var(--neu-surface-bright);
+  box-shadow: var(--neu-shadow-hover);
+  transform: translateY(-1.5px);
+}
+
+.neu-card-interactive:active {
+  background: var(--neu-recessed);
+  box-shadow: var(--neu-shadow-inset-sm);
+  transform: translateY(0px);
+}
+
+/* Subtle Raised Sub-Panel (for compact blocks, floating map controls, toolbar) */
+.neu-surface-sm {
+  background: var(--neu-surface);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow: var(--neu-shadow-raised-sm);
+}
+
+/* Recessed Inset Container (chart wells, telemetry readouts, tab tracks) */
+.neu-inset {
+  background: var(--neu-recessed);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: var(--neu-shadow-inset);
+}
+
+.neu-inset-sm {
+  background: var(--neu-recessed);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow: var(--neu-shadow-inset-sm);
+}
+
+/* Elevated Sidebar & Top Bar Surfaces */
+.neu-sidebar {
+  background: var(--neu-surface);
+  box-shadow: 6px 0 18px rgba(163, 177, 198, 0.42), inset -1px 0 0 rgba(255, 255, 255, 0.72);
+}
+
+.neu-header {
+  background: var(--neu-surface);
+  box-shadow: 0 5px 14px rgba(163, 177, 198, 0.36), inset 0 -1px 0 rgba(255, 255, 255, 0.72);
+}
+
+/* Navigation Item: Soft Flat -> Hover Raised -> Active Recessed Inset */
+.neu-nav-item {
+  border-radius: 12px;
+  color: #4A5A72;
+  transition: box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.neu-nav-item:hover {
+  background: var(--neu-surface-bright);
+  color: var(--neu-ink);
+  box-shadow: 3px 3px 7px rgba(163, 177, 198, 0.42), -3px -3px 7px rgba(255, 255, 255, 0.84);
+}
+
+.neu-nav-item:active {
+  box-shadow: var(--neu-shadow-inset-sm);
+}
+
+.neu-nav-active {
+  border-radius: 12px;
+  background: var(--neu-recessed);
+  color: var(--neu-accent);
+  box-shadow: var(--neu-shadow-inset-sm);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+/* Soft Raised Secondary / Neutral Button */
+.neu-btn {
+  background: var(--neu-surface);
+  color: var(--neu-ink);
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 3px 3px 7px rgba(163, 177, 198, 0.48), -3px -3px 7px rgba(255, 255, 255, 0.88);
+  transition: box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.neu-btn:hover:not(:disabled) {
+  background: var(--neu-surface-bright);
+  box-shadow: 4px 4px 10px rgba(155, 170, 192, 0.55), -4px -4px 10px rgba(255, 255, 255, 0.94);
+  transform: translateY(-0.5px);
+}
+
+.neu-btn:active:not(:disabled) {
+  background: var(--neu-recessed);
+  box-shadow: var(--neu-shadow-inset-sm);
+  transform: translateY(0px);
+}
+
+/* Soft Raised Primary Accent Button (#356AE6) */
+.neu-btn-primary {
+  background: linear-gradient(145deg, #3D74F2, #2D5FD8);
+  color: #FFFFFF;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: var(--neu-shadow-primary);
+  transition: box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 150ms ease;
+}
+
+.neu-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.04);
+  box-shadow: var(--neu-shadow-primary-hover);
+  transform: translateY(-0.5px);
+}
+
+.neu-btn-primary:active:not(:disabled) {
+  box-shadow: var(--neu-shadow-primary-pressed);
+  transform: translateY(0px);
+}
+
+/* High-Visibility Critical / SOS Button */
+.neu-btn-danger {
+  background: linear-gradient(145deg, #E53232, #C91D1D);
+  color: #FFFFFF;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: var(--neu-shadow-danger);
+  transition: box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 150ms ease;
+}
+
+.neu-btn-danger:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: translateY(-0.5px);
+}
+
+.neu-btn-danger:active:not(:disabled) {
+  box-shadow: inset 3px 3px 7px rgba(127, 29, 29, 0.45);
+  transform: translateY(0px);
+}
+
+/* Soft Emergency Alert Container (preserves unmistakable warning visibility) */
+.neu-sos-panel {
+  background: linear-gradient(145deg, #FDF2F2, #FAE6E6);
+  border-radius: 16px;
+  border: 1px solid rgba(220, 38, 38, 0.32);
+  box-shadow: 6px 6px 14px rgba(185, 118, 128, 0.26), -5px -5px 12px rgba(255, 255, 255, 0.88);
+}
+
+/* Recessed Form Inputs, Selects & Textareas */
+.neu-input {
+  background: var(--neu-recessed);
+  color: var(--neu-ink);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  box-shadow: var(--neu-shadow-inset-sm);
+  transition: box-shadow 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+
+.neu-input::placeholder {
+  color: #7A89A0;
+}
+
+.neu-input:focus {
+  outline: none;
+  background: #EDF1F7;
+  border-color: rgba(53, 106, 230, 0.45);
+  box-shadow: var(--neu-shadow-inset-sm), var(--neu-focus-ring);
+}
+
+.neu-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* Segmented Tab Track & Active Pill */
+.neu-tab-track {
+  background: var(--neu-recessed);
+  border-radius: 12px;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  box-shadow: var(--neu-shadow-inset-sm);
+}
+
+.neu-tab-active {
+  background: var(--neu-surface-bright);
+  color: var(--neu-accent);
+  border-radius: 9px;
+  box-shadow: 3px 3px 7px rgba(163, 177, 198, 0.46), -2px -2px 6px rgba(255, 255, 255, 0.9);
+}
+
+.neu-tab-inactive {
+  color: #52627A;
+  border-radius: 9px;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.neu-tab-inactive:hover {
+  color: var(--neu-ink);
+}
+
+/* Soft Modal Shell */
+.neu-modal {
+  background: var(--neu-surface);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 16px 16px 36px rgba(23, 36, 58, 0.24), -8px -8px 20px rgba(255, 255, 255, 0.35);
+}
+
+/* Soft GIS Map Outer Frame — Zero inner shadows obscuring map tiles */
+.neu-map-frame {
+  background: var(--neu-surface);
+  border-radius: 16px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: var(--neu-shadow-raised);
+}
+
+/* Soft Hairline Divider */
+.neu-divider {
+  border-color: rgba(163, 177, 198, 0.32);
+}
+
+/* Precision municipal micro-caps */
+.label-caps {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ============================================================================
+ * Leaflet GIS Map Soft Controls (Preserving 100% Geographical Clarity)
+ * ============================================================================ */
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: #DCE3EE;
+  z-index: 1;
+}
+
+.leaflet-bar {
+  border: none !important;
+  box-shadow: 4px 4px 10px rgba(23, 36, 58, 0.16), -2px -2px 6px rgba(255, 255, 255, 0.72) !important;
+  border-radius: 11px !important;
+  overflow: hidden;
+}
+
+.leaflet-bar a {
+  background-color: #EEF2F7 !important;
+  color: #17243A !important;
+  border-bottom: 1px solid rgba(163, 177, 198, 0.35) !important;
+  font-weight: 600;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.leaflet-bar a:hover {
+  background-color: #F6F9FC !important;
+  color: #356AE6 !important;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 12px;
+  background: #EEF2F7;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 6px 6px 16px rgba(23, 36, 58, 0.18), -4px -4px 10px rgba(255, 255, 255, 0.7);
+  padding: 0;
+}
+
+.leaflet-popup-content {
+  margin: 0;
+  min-width: 220px;
+}
+
+.leaflet-control-attribution {
+  font-size: 10px !important;
+  background: rgba(238, 242, 247, 0.88) !important;
+  color: #52627A !important;
+  border-top-left-radius: 8px;
+}
+
+/* Soft Recessed Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #E2E7F0;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #BAC5D6;
+  border-radius: 9999px;
+  border: 1.5px solid #E2E7F0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #95A5BE;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

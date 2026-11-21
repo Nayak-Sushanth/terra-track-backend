@@ -1,0 +1,8 @@
+{
+  "name": "TERRA Track — Municipal Road Intelligence Platform",
+  "description": "IoT-based municipal road monitoring, pothole triage, GIS hotspot analysis, and repair management platform powered by ESP32 and MPU6050 sensor telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

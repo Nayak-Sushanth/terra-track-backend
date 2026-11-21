@@ -1,0 +1,257 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated municipal operator profile and authoritative RBAC role.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "minLength": 3, "maxLength": 200 },
+        "role": { "type": "string", "enum": ["Admin", "Municipal Officer", "Field Maintenance Team"] },
+        "department": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "districtScope": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["Active", "Suspended"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "email", "role", "department", "districtScope", "status", "createdAt", "updatedAt"]
+    },
+    "Esp32Device": {
+      "title": "Esp32Device",
+      "description": "ESP32 + MPU6050 + GPS road monitoring unit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "vehicleLabel": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "mountType": { "type": "string", "enum": ["Municipal Patrol Van", "Public Transit Bus", "Road Inspection Truck", "Utility Fleet"] },
+        "district": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "type": "string", "enum": ["Online", "Degraded", "Offline"] },
+        "firmwareVersion": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "mpu6050Status": { "type": "string", "enum": ["Calibrated", "Drift Warning", "Fault"] },
+        "gpsFix": { "type": "string", "enum": ["3D Fix", "2D Fix", "No Fix"] },
+        "satellites": { "type": "number" },
+        "batteryVoltage": { "type": "number" },
+        "signalRssi": { "type": "number" },
+        "packetsToday": { "type": "number" },
+        "potholesDetectedToday": { "type": "number" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "speedKmh": { "type": "number" },
+        "manualSosButtonState": { "type": "string", "enum": ["Armed", "Triggered"] },
+        "dataSource": { "type": "string", "enum": ["LIVE_ESP32", "SIMULATED_DEMO"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "vehicleLabel", "mountType", "district", "status", "firmwareVersion", "mpu6050Status", "gpsFix", "satellites", "batteryVoltage", "signalRssi", "lat", "lng", "manualSosButtonState", "dataSource", "updatedAt"]
+    },
+    "PotholeEvent": {
+      "title": "PotholeEvent",
+      "description": "Validated MPU6050 sensor ML pothole detection event.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roadName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "segmentCode": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "district": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "arterialClass": { "type": "string", "enum": ["Arterial", "Collector", "Local", "Highway"] },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "h3Index": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "clusterId": { "type": "string", "maxLength": 64 },
+        "classification": { "type": "string", "enum": ["Pothole"] },
+        "severity": { "type": "string", "enum": ["Critical", "High", "Moderate"] },
+        "status": { "type": "string", "enum": ["Detected", "Verified", "Scheduled", "In Progress", "Repaired"] },
+        "priorityScore": { "type": "number" },
+        "priorityTier": { "type": "string", "enum": ["P1", "P2", "P3"] },
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "peakAccelG": { "type": "number" },
+        "rmsVibration": { "type": "number" },
+        "iriScore": { "type": "number" },
+        "mlConfidence": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "dataSource": { "type": "string", "enum": ["LIVE_ESP32", "SIMULATED_DEMO"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roadName", "segmentCode", "district", "arterialClass", "lat", "lng", "classification", "severity", "status", "priorityScore", "priorityTier", "deviceId", "dataSource", "createdAt", "updatedAt"]
+    },
+    "PotholeCluster": {
+      "title": "PotholeCluster",
+      "description": "DBSCAN spatial hotspot corridor cluster.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "district": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "centroidLat": { "type": "number" },
+        "centroidLng": { "type": "number" },
+        "radiusMeters": { "type": "number" },
+        "potholeCount": { "type": "number" },
+        "criticalCount": { "type": "number" },
+        "avgIri": { "type": "number" },
+        "maxPeakG": { "type": "number" },
+        "priorityScore": { "type": "number" },
+        "riskTier": { "type": "string", "enum": ["Critical", "High", "Moderate"] },
+        "dataSource": { "type": "string", "enum": ["LIVE_ESP32", "SIMULATED_DEMO"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "district", "centroidLat", "centroidLng", "radiusMeters", "potholeCount", "priorityScore", "riskTier", "dataSource", "updatedAt"]
+    },
+    "MunicipalZone": {
+      "title": "MunicipalZone",
+      "description": "Municipal ward/district boundary metadata and SLA policy.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "slaCriticalHours": { "type": "number" },
+        "slaHighHours": { "type": "number" },
+        "targetIriMax": { "type": "number" },
+        "roadKmMonitored": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "code", "slaCriticalHours", "slaHighHours", "targetIriMax", "updatedAt"]
+    },
+    "MaintenanceTeam": {
+      "title": "MaintenanceTeam",
+      "description": "Field road maintenance crew and vehicle dispatch unit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "leadEngineer": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "district": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "type": "string", "enum": ["Available", "Dispatched", "On Site", "Off Shift"] },
+        "vehicleUnit": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "membersCount": { "type": "number" },
+        "contactRadio": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "leadEngineer", "district", "status", "vehicleUnit", "membersCount", "contactRadio", "updatedAt"]
+    },
+    "RepairTask": {
+      "title": "RepairTask",
+      "description": "Municipal road repair work order with SLA tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "roadName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "district": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "potholeIds": { "type": "array" },
+        "priority": { "type": "string", "enum": ["P1", "P2", "P3"] },
+        "status": { "type": "string", "enum": ["Queued", "Dispatched", "In Progress", "Verification", "Completed"] },
+        "assignedCrewId": { "type": "string", "maxLength": 64 },
+        "estimatedAsphaltTons": { "type": "number" },
+        "estimatedCostUsd": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "dataSource": { "type": "string", "enum": ["LIVE_ESP32", "SIMULATED_DEMO"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "roadName", "district", "priority", "status", "estimatedAsphaltTons", "estimatedCostUsd", "dataSource", "createdBy", "createdAt", "updatedAt"]
+    },
+    "RepairHistory": {
+      "title": "RepairHistory",
+      "description": "Immutable audit trail of repair task lifecycle transitions and IRI verification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "previousStatus": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "newStatus": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "postRepairIri": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskId", "previousStatus", "newStatus", "actorUid", "actorName", "createdAt"]
+    },
+    "SosAlert": {
+      "title": "SosAlert",
+      "description": "Independent physical manual SOS push-button emergency alert.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "isManualSos": { "type": "boolean" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "deviceId": { "type": "string", "maxLength": 64 },
+        "roadName": { "type": "string", "maxLength": 160 },
+        "operatorName": { "type": "string", "maxLength": 120 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Acknowledged", "Resolved"] },
+        "acknowledgedBy": { "type": "string", "maxLength": 120 },
+        "dataSource": { "type": "string", "enum": ["LIVE_ESP32", "SIMULATED_DEMO"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "isManualSos", "title", "message", "status", "dataSource", "createdAt", "updatedAt"]
+    },
+    "NotificationRecord": {
+      "title": "NotificationRecord",
+      "description": "Automated road hazard, hotspot threshold, SLA, and device fault notifications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "category": { "type": "string", "enum": ["CRITICAL_POTHOLE", "HOTSPOT_THRESHOLD", "SLA_BREACH", "DEVICE_FAULT"] },
+        "severity": { "type": "string", "enum": ["Critical", "High", "Moderate", "Info"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["Active", "Acknowledged", "Resolved"] },
+        "acknowledgedBy": { "type": "string", "maxLength": 120 },
+        "dataSource": { "type": "string", "enum": ["LIVE_ESP32", "SIMULATED_DEMO"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "category", "severity", "title", "message", "status", "dataSource", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Municipal user profiles with PII isolation and authoritative RBAC roles."
+    },
+    "/devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/Esp32Device" },
+      "description": "Registered ESP32 + MPU6050 + GPS patrol hardware nodes."
+    },
+    "/pothole_events/{eventId}": {
+      "schema": { "$ref": "#/entities/PotholeEvent" },
+      "description": "Validated pothole-only detection events separated by LIVE_ESP32 vs SIMULATED_DEMO."
+    },
+    "/pothole_clusters/{clusterId}": {
+      "schema": { "$ref": "#/entities/PotholeCluster" },
+      "description": "DBSCAN hotspot corridor clusters."
+    },
+    "/municipal_zones/{zoneId}": {
+      "schema": { "$ref": "#/entities/MunicipalZone" },
+      "description": "Municipal districts/wards and SLA thresholds."
+    },
+    "/maintenance_teams/{teamId}": {
+      "schema": { "$ref": "#/entities/MaintenanceTeam" },
+      "description": "Field road repair teams and dispatch readiness."
+    },
+    "/repair_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/RepairTask" },
+      "description": "Municipal asphalt repair work orders."
+    },
+    "/repair_history/{historyId}": {
+      "schema": { "$ref": "#/entities/RepairHistory" },
+      "description": "Append-only immutable audit log of repair status updates."
+    },
+    "/sos_alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/SosAlert" },
+      "description": "Independent physical manual SOS push-button emergency alerts."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationRecord" },
+      "description": "Automated municipal hazard, hotspot, SLA, and device notifications."
+    }
+  }
+}
