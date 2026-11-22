@@ -75,10 +75,7 @@ export const LiveRoadMap: React.FC<LiveRoadMapProps> = ({
 
   const filteredPotholes = useMemo(() => {
     return workspace.potholes.filter((p) => {
-      if (
-        p.isVerifiedForMap === false ||
-        !hasValidMapCoordinates(p.lat, p.lng, p.dataSource, p.hasReliableGps)
-      ) {
+      if (!hasValidMapCoordinates(p.lat, p.lng, p.dataSource, p.hasReliableGps)) {
         return false;
       }
       if (severityFilter === 'All') return true;
@@ -90,9 +87,7 @@ export const LiveRoadMap: React.FC<LiveRoadMapProps> = ({
   const unmappedCount = useMemo(
     () =>
       workspace.potholes.filter(
-        (p) =>
-          p.isVerifiedForMap === false ||
-          !hasValidMapCoordinates(p.lat, p.lng, p.dataSource, p.hasReliableGps)
+        (p) => !hasValidMapCoordinates(p.lat, p.lng, p.dataSource, p.hasReliableGps)
       ).length,
     [workspace.potholes]
   );

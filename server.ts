@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { createInitialDemoWorkspace } from './src/data/demoData.ts';
 import { evaluateRoadConditionGate } from './src/services/esp32Service.ts';
 import {
@@ -43,9 +44,10 @@ const FIREBASE_DATABASE_ID =
   process.env.FIREBASE_DATABASE_ID ||
   '(default)';
 
-// Initialize Firebase Admin SDK strictly once for ID token cryptographic verification.
-// Note: `verifyIdToken(token)` requires no IAM role or service account key.
+// Initialize Firebase Admin SDK strictly once for ID token cryptographic verification
+// and persistent server-side Firestore ingestion on project terra-track-53004.
 let adminAuth: ReturnType<typeof getAdminAuth> | null = null;
+let adminDb: ReturnType<typeof getAdminFirestore> | null = null;
 try {
   const adminApp =
     getApps().length > 0
@@ -54,6 +56,10 @@ try {
           projectId: FIREBASE_PROJECT_ID,
         });
   adminAuth = getAdminAuth(adminApp);
+  adminDb =
+    FIREBASE_DATABASE_ID && FIREBASE_DATABASE_ID !== '(default)'
+      ? getAdminFirestore(adminApp, FIREBASE_DATABASE_ID)
+      : getAdminFirestore(adminApp);
 } catch (err) {
   console.error('Firebase Admin SDK initialization warning:', err);
 }
@@ -317,9 +323,13 @@ function requireDeviceApiKey(req: Request, res: Response, next: NextFunction): v
     return;
   }
 
-  const providedKey = String(req.headers['x-device-api-key'] || '');
+  const providedKey = String(
+    req.headers['x-device-api-key'] || req.headers['x-device-key'] || ''
+  );
   if (!providedKey) {
-    res.status(401).json({ error: 'Missing X-Device-API-Key header for hardware telemetry.' });
+    res.status(401).json({
+      error: 'Missing X-Device-API-Key (or x-device-key) header for hardware telemetry.',
+    });
     return;
   }
 
@@ -331,6 +341,434 @@ function requireDeviceApiKey(req: Request, res: Response, next: NextFunction): v
   }
 
   next();
+}
+
+function sanitizeFirestoreDocId(raw: string, fallbackPrefix: string): string {
+  const cleaned = String(raw || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 120);
+  return cleaned || `${fallbackPrefix}_${Date.now()}`;
+}
+
+function normalizeIncomingHardwareTelemetry(
+  rawBody: Record<string, unknown>,
+  headerDeviceId?: string
+): {
+  deviceId: string;
+  eventId: string;
+  condition: string;
+  isPothole: boolean;
+  lat: number | null;
+  lng: number | null;
+  locationReliable: boolean;
+  peakAccelG: number;
+  rmsVibration: number;
+  iriScore: number;
+  speedKmh: number;
+  mlConfidence: number;
+  roadName: string;
+  district: string;
+  arterialClass: PotholeRecord['arterialClass'];
+  manualSos: boolean;
+  operatorName: string | null;
+  firmwareVersion: string | null;
+  batteryVoltage: number | null;
+  satellites: number | null;
+  gpsStatus: string | null;
+  mpu6050Status: string | null;
+  detectedAtIso: string;
+} {
+  const gpsObj =
+    rawBody.gps && typeof rawBody.gps === 'object'
+      ? (rawBody.gps as Record<string, unknown>)
+      : {};
+  const sensorObj =
+    rawBody.sensor && typeof rawBody.sensor === 'object'
+      ? (rawBody.sensor as Record<string, unknown>)
+      : {};
+  const detectionObj =
+    rawBody.detection && typeof rawBody.detection === 'object'
+      ? (rawBody.detection as Record<string, unknown>)
+      : {};
+
+  const num = (v: unknown): number | null => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim() !== '') {
+      const parsed = Number(v);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+  const str = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() ? v.trim() : null;
+
+  const deviceId =
+    str(rawBody.deviceId) ||
+    str(rawBody.device_id) ||
+    str(headerDeviceId) ||
+    '';
+
+  const rawCondition =
+    str(rawBody.classification) ||
+    str(rawBody.condition) ||
+    str(rawBody.road_condition) ||
+    str(rawBody.roadCondition) ||
+    str(detectionObj.classification) ||
+    str(detectionObj.label) ||
+    '';
+
+  const isPothole = rawCondition.trim().toUpperCase() === 'POTHOLE';
+
+  const lat = num(rawBody.latitude ?? rawBody.lat ?? gpsObj.latitude ?? gpsObj.lat);
+  const lng = num(rawBody.longitude ?? rawBody.lng ?? rawBody.lon ?? gpsObj.longitude ?? gpsObj.lng);
+  const coordsInBounds =
+    lat !== null &&
+    lng !== null &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180 &&
+    !(lat === 0 && lng === 0);
+
+  const explicitReliable =
+    typeof rawBody.locationReliable === 'boolean'
+      ? rawBody.locationReliable
+      : typeof rawBody.gps_valid === 'boolean'
+        ? rawBody.gps_valid
+        : typeof gpsObj.valid === 'boolean'
+          ? gpsObj.valid
+          : null;
+  const locationReliable = coordsInBounds && explicitReliable !== false;
+
+  const rawConfidence =
+    num(
+      rawBody.confidence ??
+        rawBody.mlConfidence ??
+        rawBody.ml_confidence ??
+        detectionObj.confidence
+    ) ?? 0;
+  const mlConfidence =
+    rawConfidence > 0 && rawConfidence <= 1
+      ? Number((rawConfidence * 100).toFixed(1))
+      : Number(Math.max(0, Math.min(100, rawConfidence)).toFixed(1));
+
+  const peakAccelG = Math.max(
+    0,
+    num(
+      rawBody.peakAcceleration ??
+        rawBody.peak_acceleration ??
+        rawBody.peakAccelG ??
+        rawBody.peak_accel_g ??
+        sensorObj.peakAcceleration ??
+        sensorObj.accelZ
+    ) ?? 0
+  );
+  const rmsVibration = Math.max(
+    0,
+    num(
+      rawBody.vibrationLevel ??
+        rawBody.vibration_level ??
+        rawBody.rmsVibration ??
+        rawBody.rms_vibration ??
+        sensorObj.vibrationLevel
+    ) ?? 0
+  );
+  const iriScore = Math.max(
+    0,
+    num(rawBody.iriScore ?? rawBody.iri_score ?? sensorObj.iriScore) ?? 0
+  );
+  const speedKmh = Math.max(
+    0,
+    num(rawBody.speedKmh ?? rawBody.speed_kmh ?? gpsObj.speed ?? rawBody.speed) ?? 0
+  );
+
+  const rawArterial = str(rawBody.arterialClass ?? rawBody.arterial_class);
+  const arterialClass: PotholeRecord['arterialClass'] =
+    rawArterial === 'Highway' ||
+    rawArterial === 'Arterial' ||
+    rawArterial === 'Collector' ||
+    rawArterial === 'Local'
+      ? rawArterial
+      : 'Arterial';
+
+  const rawEventId =
+    str(rawBody.eventId) ||
+    str(rawBody.event_id) ||
+    str(detectionObj.eventId) ||
+    `EVT-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+  const rawTimestamp = str(rawBody.timestamp) || str(rawBody.detectedAt) || str(rawBody.detected_at);
+  const parsedDate = rawTimestamp ? new Date(rawTimestamp) : new Date();
+  const detectedAtIso = Number.isNaN(parsedDate.getTime())
+    ? new Date().toISOString()
+    : parsedDate.toISOString();
+
+  return {
+    deviceId: deviceId.slice(0, 80),
+    eventId: sanitizeFirestoreDocId(rawEventId, 'EVT'),
+    condition: rawCondition || 'UNKNOWN',
+    isPothole,
+    lat: locationReliable ? lat : null,
+    lng: locationReliable ? lng : null,
+    locationReliable,
+    peakAccelG,
+    rmsVibration,
+    iriScore,
+    speedKmh,
+    mlConfidence,
+    roadName: (
+      str(rawBody.roadName) ||
+      str(rawBody.road_name) ||
+      str(rawBody.locationName) ||
+      'GPS Hardware Sector'
+    ).slice(0, 160),
+    district: (
+      str(rawBody.district) ||
+      str(rawBody.ward) ||
+      str(rawBody.zone) ||
+      'Municipal Road Corridor'
+    ).slice(0, 120),
+    arterialClass,
+    manualSos: rawBody.manualSos === true || rawBody.manual_sos === true,
+    operatorName: str(rawBody.operatorName ?? rawBody.operator_name)?.slice(0, 120) ?? null,
+    firmwareVersion: str(rawBody.firmwareVersion ?? rawBody.firmware_version)?.slice(0, 40) ?? null,
+    batteryVoltage: num(rawBody.batteryVoltage ?? rawBody.battery_voltage),
+    satellites: num(rawBody.satellites ?? gpsObj.satellites),
+    gpsStatus: str(rawBody.gpsStatus ?? rawBody.gps_status ?? gpsObj.status),
+    mpu6050Status: str(rawBody.mpu6050Status ?? rawBody.mpu6050_status ?? sensorObj.status),
+    detectedAtIso,
+  };
+}
+
+/**
+ * Persists validated LIVE_ESP32 telemetry and device heartbeats directly to
+ * Cloud Firestore collections (`devices`, `sensor_detections`, `potholes`,
+ * `device_alerts`, `sos_alerts`) using the exact schema consumed by
+ * `src/services/liveFirestoreService.ts`.
+ */
+async function persistLiveEsp32TelemetryToFirestore(
+  rawBody: Record<string, unknown>,
+  headerDeviceId?: string
+): Promise<{
+  acceptedIntoPotholeWorkflow: boolean;
+  reason: string;
+  eventId: string;
+  deviceId: string;
+  potholeId: string | null;
+  alertId: string | null;
+  sosAlertId: string | null;
+  persistedCollections: string[];
+}> {
+  if (!adminDb) {
+    throw new Error(
+      'Cloud Firestore Admin SDK is not initialized on this server instance.'
+    );
+  }
+
+  const parsed = normalizeIncomingHardwareTelemetry(rawBody, headerDeviceId);
+  if (!parsed.deviceId) {
+    throw new Error('Missing required deviceId field in hardware payload.');
+  }
+
+  const nowIso = new Date().toISOString();
+  const deviceDocId = sanitizeFirestoreDocId(parsed.deviceId, 'ESP32');
+  const persistedCollections: string[] = [];
+
+  // 1. Always persist live device heartbeat & telemetry update to `/devices/{deviceId}`
+  const deviceUpdate: Record<string, unknown> = {
+    id: parsed.deviceId,
+    deviceId: parsed.deviceId,
+    device_id: parsed.deviceId,
+    status: 'Online',
+    deviceStatus: 'Online',
+    lastCommunication: nowIso,
+    lastHeartbeat: nowIso,
+    lastSeen: nowIso,
+    locationReliable: parsed.locationReliable,
+    gpsStatus: parsed.gpsStatus ?? (parsed.locationReliable ? '3D Fix' : 'No Fix'),
+    mpu6050Status: parsed.mpu6050Status ?? 'Calibrated',
+    speedKmh: parsed.speedKmh,
+    packetsToday: FieldValue.increment(1),
+    detectionCount: FieldValue.increment(1),
+    dataSource: 'LIVE_ESP32',
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (parsed.lat !== null && parsed.lng !== null) {
+    deviceUpdate.latitude = parsed.lat;
+    deviceUpdate.longitude = parsed.lng;
+    deviceUpdate.lat = parsed.lat;
+    deviceUpdate.lng = parsed.lng;
+  }
+  if (parsed.firmwareVersion) deviceUpdate.firmwareVersion = parsed.firmwareVersion;
+  if (parsed.batteryVoltage !== null) deviceUpdate.batteryVoltage = parsed.batteryVoltage;
+  if (parsed.satellites !== null) deviceUpdate.satellites = parsed.satellites;
+  if (parsed.manualSos) deviceUpdate.manualSosButtonState = 'Triggered';
+
+  // 2. Evaluate strict pothole-only workflow gate
+  const evaluation = evaluateRoadConditionGate(
+    {
+      condition: parsed.isPothole ? 'Pothole' : ('NonPothole' as TelemetryIngestPayload['condition']),
+      mlConfidence: parsed.mlConfidence,
+      peakAccelG: parsed.peakAccelG,
+    },
+    workspace.settings.mlConfidenceCutoffPct,
+    workspace.settings.mpu6050TriggerThresholdG
+  );
+
+  const batch = adminDb.batch();
+  let potholeId: string | null = null;
+  let alertId: string | null = null;
+  let sosAlertId: string | null = null;
+
+  if (parsed.manualSos) {
+    sosAlertId = `SOS-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+    batch.set(adminDb.collection('sos_alerts').doc(sosAlertId), {
+      id: sosAlertId,
+      alertId: sosAlertId,
+      eventId: parsed.eventId,
+      deviceId: parsed.deviceId,
+      type: 'MANUAL_SOS',
+      isManualSos: true,
+      severity: 'Critical',
+      title: `Manual SOS Hardware Button Activated — ${parsed.deviceId}`,
+      message: `Physical SOS switch triggered on ESP32 node ${parsed.deviceId} near ${parsed.roadName}.`,
+      latitude: parsed.lat,
+      longitude: parsed.lng,
+      locationReliable: parsed.locationReliable,
+      roadName: parsed.roadName,
+      operatorName: parsed.operatorName || 'Field Patrol Operator',
+      status: 'Active',
+      dataSource: 'LIVE_ESP32',
+      timestamp: parsed.detectedAtIso,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    persistedCollections.push('sos_alerts');
+  }
+
+  if (parsed.isPothole && evaluation.entersPotholeWorkflow) {
+    const severity = classifySeverityFromSensor(parsed.peakAccelG, parsed.iriScore);
+    const priority = calculatePotholePriority(
+      {
+        severity,
+        peakAccelG: parsed.peakAccelG,
+        arterialClass: parsed.arterialClass,
+        clusterNeighborCount: 1,
+        detectedAt: parsed.detectedAtIso,
+      },
+      workspace.settings.priorityWeights
+    );
+
+    potholeId = parsed.eventId;
+    deviceUpdate.potholesDetectedToday = FieldValue.increment(1);
+
+    // Write to `/sensor_detections/{eventId}`
+    batch.set(adminDb.collection('sensor_detections').doc(parsed.eventId), {
+      eventId: parsed.eventId,
+      deviceId: parsed.deviceId,
+      classification: 'POTHOLE',
+      severity,
+      confidence: parsed.mlConfidence,
+      latitude: parsed.lat,
+      longitude: parsed.lng,
+      locationReliable: parsed.locationReliable,
+      peakAcceleration: parsed.peakAccelG,
+      vibrationLevel: parsed.rmsVibration,
+      iriScore: parsed.iriScore,
+      speedKmh: parsed.speedKmh,
+      roadName: parsed.roadName,
+      district: parsed.district,
+      detectionSource: 'LIVE_ESP32',
+      dataSource: 'LIVE_ESP32',
+      timestamp: parsed.detectedAtIso,
+      receivedAt: nowIso,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    persistedCollections.push('sensor_detections');
+
+    // Write to `/potholes/{eventId}` (matches `mapPotholeDoc` in liveFirestoreService.ts)
+    batch.set(
+      adminDb.collection('potholes').doc(potholeId),
+      {
+        id: potholeId,
+        eventId: parsed.eventId,
+        deviceId: parsed.deviceId,
+        classification: 'POTHOLE',
+        severity,
+        status: 'Detected',
+        repair_status: 'Detected',
+        verified: false,
+        latitude: parsed.lat,
+        longitude: parsed.lng,
+        locationReliable: parsed.locationReliable,
+        roadName: parsed.roadName,
+        district: parsed.district,
+        arterialClass: parsed.arterialClass,
+        priorityScore: priority.totalScore,
+        priorityTier: priority.tier,
+        peakAcceleration: parsed.peakAccelG,
+        vibrationLevel: parsed.rmsVibration,
+        iriScore: parsed.iriScore,
+        speedKmh: parsed.speedKmh,
+        confidence: parsed.mlConfidence,
+        detectionCount: 1,
+        detectionSource: 'LIVE_ESP32',
+        dataSource: 'LIVE_ESP32',
+        timestamp: parsed.detectedAtIso,
+        detectedAt: parsed.detectedAtIso,
+        receivedAt: nowIso,
+        updatedAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    persistedCollections.push('potholes');
+
+    if (severity === 'Critical') {
+      alertId = `ALT-${parsed.eventId}`;
+      batch.set(adminDb.collection('device_alerts').doc(alertId), {
+        id: alertId,
+        alertId,
+        eventId: parsed.eventId,
+        potholeId,
+        deviceId: parsed.deviceId,
+        type: 'CRITICAL_POTHOLE',
+        isManualSos: false,
+        severity: 'Critical',
+        title: `Critical P1 Pothole Detected (${parsed.peakAccelG.toFixed(2)} g) — ${parsed.roadName}`,
+        message: `Sensor ${parsed.deviceId} classified a severe pothole (${parsed.mlConfidence.toFixed(1)}% confidence, IRI ${parsed.iriScore.toFixed(1)} m/km).`,
+        latitude: parsed.lat,
+        longitude: parsed.lng,
+        locationReliable: parsed.locationReliable,
+        roadName: parsed.roadName,
+        status: 'Active',
+        dataSource: 'LIVE_ESP32',
+        timestamp: parsed.detectedAtIso,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      persistedCollections.push('device_alerts');
+    }
+  }
+
+  batch.set(adminDb.collection('devices').doc(deviceDocId), deviceUpdate, { merge: true });
+  persistedCollections.unshift('devices');
+
+  await batch.commit();
+
+  return {
+    acceptedIntoPotholeWorkflow: parsed.isPothole && evaluation.entersPotholeWorkflow,
+    reason: parsed.isPothole
+      ? evaluation.reason
+      : 'Non-pothole telemetry ignored by pothole-only municipal workflow; device heartbeat persisted.',
+    eventId: parsed.eventId,
+    deviceId: parsed.deviceId,
+    potholeId,
+    alertId,
+    sosAlertId,
+    persistedCollections,
+  };
 }
 
 function refreshSpatialAndPriorities(
@@ -530,8 +968,9 @@ async function startServer() {
       firebaseProjectId: FIREBASE_PROJECT_ID,
       firestoreDatabaseId: FIREBASE_DATABASE_ID,
       firestoreRegion: 'asia-south1',
+      firestorePersistenceConfigured: Boolean(adminDb),
       deviceApiKeyConfigured: Boolean(process.env.ESP32_DEVICE_API_KEY),
-      mode: workspace.settings.demoModeEnabled ? 'DEMO_MODE' : 'LIVE_READY',
+      mode: 'PRODUCTION_LIVE',
       timestamp: new Date().toISOString(),
     });
   });
@@ -630,9 +1069,15 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  // Workspace bootstrap (protected; filters PII users list for non-Admins)
+  // Explicit DEMO MODE workspace bootstrap (strictly refuses live Firebase sessions so demo data is never shown as real data)
   app.get('/api/workspace', requireMunicipalAuth, (req: AuthedRequest, res) => {
     const caller = req.authUser!;
+    if (caller.authMode !== 'demo') {
+      return res.status(403).json({
+        error:
+          'Simulated /api/workspace is restricted to explicit Demo Mode. Live Firebase sessions read directly from Cloud Firestore.',
+      });
+    }
     const safeUsers =
       caller.role === 'Admin'
         ? workspace.users
@@ -640,8 +1085,12 @@ async function startServer() {
             (u) => u.uid === caller.uid || u.email.toLowerCase() === caller.email.toLowerCase()
           );
 
-    res.json({
+    return res.json({
       ...workspace,
+      settings: {
+        ...workspace.settings,
+        demoModeEnabled: true,
+      },
       users: safeUsers,
     });
   });
@@ -1283,8 +1732,17 @@ async function startServer() {
     app.use(vite.middlewares);
     serverMode = 'development';
   } else {
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.sendFile(distIndexPath);
     });
     serverMode = 'production';

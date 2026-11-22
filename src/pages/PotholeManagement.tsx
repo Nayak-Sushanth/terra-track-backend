@@ -222,7 +222,6 @@ export const PotholeManagement: React.FC<PotholeManagementProps> = ({
   };
 
   const canPlotOnMap = (row: PotholeRecord): boolean =>
-    row.isVerifiedForMap !== false &&
     row.hasReliableGps !== false &&
     typeof row.lat === 'number' &&
     typeof row.lng === 'number' &&

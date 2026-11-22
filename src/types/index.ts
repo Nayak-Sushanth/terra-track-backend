@@ -61,7 +61,6 @@ export interface PotholeRecord {
   lng: number | null;
   hasReliableGps?: boolean;
   verified?: boolean | null;
-  isVerifiedForMap?: boolean;
   h3Index: string | null;
   clusterId: string | null;
   classification: 'Pothole'; // Strictly only Pothole events enter this workflow

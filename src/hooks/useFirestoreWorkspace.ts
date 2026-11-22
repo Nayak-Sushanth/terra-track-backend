@@ -32,9 +32,13 @@ export function useFirestoreWorkspace(params: {
   getSpatialConfig: () => SpatialConfig;
   getLocalAlertOverrides: () => LocalAlertOverrides;
 }) {
-  const { session, firebaseUser, authLoading } = useAuth();
+  const { session, firebaseUser, authLoading, authRestored, verifyingAdmin } = useAuth();
   const isLiveFirebaseActive =
-    !authLoading && session?.mode === 'firebase' && Boolean(firebaseUser);
+    authRestored &&
+    !authLoading &&
+    !verifyingAdmin &&
+    session?.mode === 'firebase' &&
+    Boolean(firebaseUser);
 
   const [workspace, setWorkspace] = useState<TerraWorkspaceState | null>(null);
   const [syncState, setSyncState] = useState<LiveCollectionSyncState>(() =>

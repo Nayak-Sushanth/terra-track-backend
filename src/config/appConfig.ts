@@ -1,4 +1,10 @@
-import type { PriorityEngineWeights, ScreenId, SystemSettings } from '../types/index.ts';
+
+import type {
+  PriorityEngineWeights,
+  ScreenId,
+  SystemSettings,
+} from '../types/index.ts';
+import { ESP32_DETECTIONS_ENDPOINT } from '../api/backendAdminApi.ts';
 
 export interface NavItemConfig {
   id: ScreenId;
@@ -83,9 +89,9 @@ export const DEFAULT_PRIORITY_WEIGHTS: PriorityEngineWeights = {
 };
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
-  demoModeEnabled: true,
-  municipalityName: 'Metro Public Works Authority (Demo Sandbox)',
-  coordinateReferenceLabel: 'Simulated Municipal Grid (WGS84 / OSM)',
+  demoModeEnabled: false,
+  municipalityName: 'Metro Public Works Authority',
+  coordinateReferenceLabel: 'WGS84 / OSM',
   mpu6050TriggerThresholdG: 2.1,
   mlConfidenceCutoffPct: 82,
   dbscanDefaultEpsMeters: 320,
@@ -94,8 +100,12 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   slaCriticalHours: 24,
   slaHighHours: 72,
   priorityWeights: DEFAULT_PRIORITY_WEIGHTS,
-  esp32ApiEndpoint: '/api/telemetry/ingest',
-  firebaseStatus: 'Not Configured (Later Stage)',
+
+  // Production Render backend
+  esp32ApiEndpoint: ESP32_DETECTIONS_ENDPOINT,
+
+  // Actual connection status must be determined dynamically.
+  firebaseStatus: 'Checking Connection',
 };
 
 export const SUPPORTED_ROAD_CONDITIONS = ['Pothole'] as const;

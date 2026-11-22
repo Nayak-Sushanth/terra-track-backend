@@ -519,9 +519,9 @@ export const SettingsUsers: React.FC<SettingsUsersProps> = ({
                 municipal user Firebase ID tokens.
               </p>
               <div className="neu-inset-sm p-3 font-mono text-[11px] space-y-1 text-[#334155]">
+                <div>POST /api/device/detections (X-Device-API-Key)</div>
                 <div>POST /api/telemetry/ingest (X-Device-API-Key)</div>
                 <div>POST /api/device/sos (X-Device-API-Key)</div>
-                <div>POST /api/simulator/telemetry (Demo User Auth)</div>
               </div>
             </div>
 

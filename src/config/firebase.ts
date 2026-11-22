@@ -88,6 +88,14 @@ let firebaseAppInstance: FirebaseApp | null = null;
 let firebaseAuthInstance: Auth | null = null;
 let firestoreInstance: Firestore | null = null;
 let persistenceConfigured = false;
+let initInFlightPromise: Promise<{
+  ready: boolean;
+  app: FirebaseApp | null;
+  auth: Auth | null;
+  db: Firestore | null;
+  config: FirebasePublicConfig;
+  missingFields: string[];
+}> | null = null;
 
 function readBuildTimePublicConfig(): FirebasePublicConfig {
   const fromDefine =
@@ -116,7 +124,8 @@ export function isFirebasePublicConfigComplete(cfg: FirebasePublicConfig | null)
 /**
  * Hydrates public Firebase Web SDK configuration from build-time env vars or
  * the backend `/api/firebase-config` route (public client keys only).
- * Strictly guards against duplicate `initializeApp()` calls.
+ * Strictly guards against duplicate `initializeApp()` calls and ensures
+ * browser Auth persistence is configured before session restoration.
  */
 export async function ensureFirebaseInitialized(): Promise<{
   ready: boolean;
@@ -126,95 +135,120 @@ export async function ensureFirebaseInitialized(): Promise<{
   config: FirebasePublicConfig;
   missingFields: string[];
 }> {
-  if (!cachedConfig) {
-    cachedConfig = readBuildTimePublicConfig();
-  }
-
-  // If browser env vars weren't bundled with VITE_ prefix, check runtime server public config
-  if (!isFirebasePublicConfigComplete(cachedConfig) && typeof window !== 'undefined') {
-    try {
-      const resp = await fetch('/api/firebase-config');
-      if (resp.ok) {
-        const runtimeCfg = (await resp.json()) as Partial<FirebasePublicConfig>;
-        cachedConfig = {
-          apiKey: runtimeCfg.apiKey || cachedConfig.apiKey,
-          authDomain: runtimeCfg.authDomain || cachedConfig.authDomain,
-          projectId: runtimeCfg.projectId || cachedConfig.projectId || 'terra-track-53004',
-          storageBucket: runtimeCfg.storageBucket || cachedConfig.storageBucket,
-          messagingSenderId:
-            runtimeCfg.messagingSenderId || cachedConfig.messagingSenderId,
-          appId: runtimeCfg.appId || cachedConfig.appId,
-          databaseId: runtimeCfg.databaseId || cachedConfig.databaseId || '(default)',
-        };
-      }
-    } catch {
-      // Ignore network fallback error; handled cleanly via missingFields
-    }
-  }
-
-  const missingFields: string[] = [];
-  if (!cachedConfig.apiKey) missingFields.push('VITE_FIREBASE_API_KEY');
-  if (!cachedConfig.projectId) missingFields.push('VITE_FIREBASE_PROJECT_ID');
-
-  if (!isFirebasePublicConfigComplete(cachedConfig)) {
+  if (firebaseAppInstance && firebaseAuthInstance && firestoreInstance && cachedConfig) {
     return {
-      ready: false,
-      app: null,
-      auth: null,
-      db: null,
+      ready: true,
+      app: firebaseAppInstance,
+      auth: firebaseAuthInstance,
+      db: firestoreInstance,
+      config: cachedConfig,
+      missingFields: [],
+    };
+  }
+
+  if (initInFlightPromise) {
+    return initInFlightPromise;
+  }
+
+  initInFlightPromise = (async () => {
+    if (!cachedConfig) {
+      cachedConfig = readBuildTimePublicConfig();
+    }
+
+    // If browser env vars weren't bundled with VITE_ prefix, check runtime server public config
+    if (!isFirebasePublicConfigComplete(cachedConfig) && typeof window !== 'undefined') {
+      try {
+        const resp = await fetch('/api/firebase-config');
+        if (resp.ok) {
+          const runtimeCfg = (await resp.json()) as Partial<FirebasePublicConfig>;
+          cachedConfig = {
+            apiKey: runtimeCfg.apiKey || cachedConfig.apiKey,
+            authDomain: runtimeCfg.authDomain || cachedConfig.authDomain,
+            projectId: runtimeCfg.projectId || cachedConfig.projectId || 'terra-track-53004',
+            storageBucket: runtimeCfg.storageBucket || cachedConfig.storageBucket,
+            messagingSenderId:
+              runtimeCfg.messagingSenderId || cachedConfig.messagingSenderId,
+            appId: runtimeCfg.appId || cachedConfig.appId,
+            databaseId: runtimeCfg.databaseId || cachedConfig.databaseId || '(default)',
+          };
+        }
+      } catch {
+        // Ignore network fallback error; handled cleanly via missingFields
+      }
+    }
+
+    const missingFields: string[] = [];
+    if (!cachedConfig.apiKey) missingFields.push('VITE_FIREBASE_API_KEY');
+    if (!cachedConfig.projectId) missingFields.push('VITE_FIREBASE_PROJECT_ID');
+
+    if (!isFirebasePublicConfigComplete(cachedConfig)) {
+      return {
+        ready: false,
+        app: null,
+        auth: null,
+        db: null,
+        config: cachedConfig,
+        missingFields,
+      };
+    }
+
+    if (!firebaseAppInstance) {
+      const firebaseOptions: Record<string, string> = {
+        apiKey: cachedConfig.apiKey,
+        authDomain:
+          cachedConfig.authDomain || `${cachedConfig.projectId}.firebaseapp.com`,
+        projectId: cachedConfig.projectId,
+      };
+      if (cachedConfig.storageBucket) {
+        firebaseOptions.storageBucket = cachedConfig.storageBucket;
+      }
+      if (cachedConfig.messagingSenderId) {
+        firebaseOptions.messagingSenderId = cachedConfig.messagingSenderId;
+      }
+      if (cachedConfig.appId) {
+        firebaseOptions.appId = cachedConfig.appId;
+      }
+
+      firebaseAppInstance =
+        getApps().length > 0 ? getApp() : initializeApp(firebaseOptions);
+    }
+
+    if (!firebaseAuthInstance) {
+      firebaseAuthInstance = getAuth(firebaseAppInstance);
+    }
+
+    if (!persistenceConfigured && typeof window !== 'undefined') {
+      persistenceConfigured = true;
+      try {
+        await setPersistence(firebaseAuthInstance, browserLocalPersistence);
+      } catch (err) {
+        console.warn('Firebase Auth persistence fallback:', err);
+      }
+    }
+
+    if (!firestoreInstance) {
+      const dbId = cachedConfig.databaseId;
+      firestoreInstance =
+        dbId && dbId !== '(default)'
+          ? getFirestore(firebaseAppInstance, dbId)
+          : getFirestore(firebaseAppInstance);
+    }
+
+    return {
+      ready: true,
+      app: firebaseAppInstance,
+      auth: firebaseAuthInstance,
+      db: firestoreInstance,
       config: cachedConfig,
       missingFields,
     };
+  })();
+
+  try {
+    return await initInFlightPromise;
+  } finally {
+    initInFlightPromise = null;
   }
-
-  if (!firebaseAppInstance) {
-    const firebaseOptions: Record<string, string> = {
-      apiKey: cachedConfig.apiKey,
-      authDomain:
-        cachedConfig.authDomain || `${cachedConfig.projectId}.firebaseapp.com`,
-      projectId: cachedConfig.projectId,
-    };
-    if (cachedConfig.storageBucket) {
-      firebaseOptions.storageBucket = cachedConfig.storageBucket;
-    }
-    if (cachedConfig.messagingSenderId) {
-      firebaseOptions.messagingSenderId = cachedConfig.messagingSenderId;
-    }
-    if (cachedConfig.appId) {
-      firebaseOptions.appId = cachedConfig.appId;
-    }
-
-    firebaseAppInstance =
-      getApps().length > 0 ? getApp() : initializeApp(firebaseOptions);
-  }
-
-  if (!firebaseAuthInstance) {
-    firebaseAuthInstance = getAuth(firebaseAppInstance);
-  }
-
-  if (!persistenceConfigured && typeof window !== 'undefined') {
-    persistenceConfigured = true;
-    setPersistence(firebaseAuthInstance, browserLocalPersistence).catch((err) => {
-      console.warn('Firebase Auth persistence fallback:', err);
-    });
-  }
-
-  if (!firestoreInstance) {
-    const dbId = cachedConfig.databaseId;
-    firestoreInstance =
-      dbId && dbId !== '(default)'
-        ? getFirestore(firebaseAppInstance, dbId)
-        : getFirestore(firebaseAppInstance);
-  }
-
-  return {
-    ready: true,
-    app: firebaseAppInstance,
-    auth: firebaseAuthInstance,
-    db: firestoreInstance,
-    config: cachedConfig,
-    missingFields,
-  };
 }
 
 export function getFirebaseAuthInstance(): Auth | null {

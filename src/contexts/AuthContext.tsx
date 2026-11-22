@@ -28,6 +28,7 @@ interface AuthContextValue {
   session: AuthenticatedSession | null;
   firebaseUser: FirebaseUser | null;
   authLoading: boolean;
+  authRestored: boolean;
   verifyingAdmin: boolean;
   authError: string | null;
   clearAuthError: () => void;
@@ -98,6 +99,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [demoBearerToken, setDemoBearerToken] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authRestored, setAuthRestored] = useState(false);
   const [verifyingAdmin, setVerifyingAdmin] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [firebaseReady, setFirebaseReady] = useState(false);
@@ -145,8 +147,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setVerifyingAdmin(true);
 
     try {
-      const idToken = await user.getIdToken();
-      const adminProfile = await fetchAdminProfile(idToken, user.uid);
+      let idToken = await user.getIdToken();
+      let adminProfile;
+      try {
+        adminProfile = await fetchAdminProfile(idToken, user.uid);
+      } catch (firstErr) {
+        // On restored sessions, a cached ID token may be near expiry; retry once with a forced refresh
+        if (firstErr instanceof BackendAuthError && firstErr.code === 'UNAUTHORIZED') {
+          idToken = await user.getIdToken(true);
+          adminProfile = await fetchAdminProfile(idToken, user.uid);
+        } else {
+          throw firstErr;
+        }
+      }
 
       setFirebaseUser(user);
       setDemoBearerToken(null);
@@ -191,7 +204,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Initialize singleton Firebase SDK + startup connection test + Auth persistence listener
+  // Initialize singleton Firebase SDK + Auth persistence restoration + connection test
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
     let mounted = true;
@@ -202,10 +215,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setFirebaseReady(init.ready);
       setMissingFirebaseVars(init.missingFields);
 
-      const conn = await testFirestoreConnection();
-      if (mounted) setConnectivity(conn);
+      // Run Firestore connectivity diagnostic in parallel so it never delays Auth restoration
+      testFirestoreConnection()
+        .then((conn) => {
+          if (mounted) setConnectivity(conn);
+        })
+        .catch(() => undefined);
 
       if (init.ready && init.auth) {
+        // Wait for Firebase Auth to finish restoring persisted credentials from storage
+        if (typeof init.auth.authStateReady === 'function') {
+          try {
+            await init.auth.authStateReady();
+          } catch (err) {
+            console.warn('Firebase authStateReady warning:', err);
+          }
+        }
+        if (!mounted) return;
+
         unsubscribe = onAuthStateChanged(init.auth, async (user) => {
           if (!mounted) return;
           if (explicitAuthInFlightRef.current) {
@@ -217,15 +244,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch {
               // Error already captured in authError and session cleared cleanly
             } finally {
-              if (mounted) setAuthLoading(false);
+              if (mounted) {
+                setAuthRestored(true);
+                setAuthLoading(false);
+              }
             }
           } else {
             setFirebaseUser(null);
             setSession((prev) => (prev?.mode === 'demo' ? prev : null));
+            setAuthRestored(true);
             setAuthLoading(false);
           }
         });
       } else {
+        setAuthRestored(true);
         setAuthLoading(false);
       }
     })();
@@ -249,6 +281,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const cred = await signInWithEmailAndPassword(init.auth, email.trim(), password);
         await hydrateFirebaseUserSession(cred.user);
+        setAuthRestored(true);
+        setAuthLoading(false);
       } finally {
         explicitAuthInFlightRef.current = false;
       }
@@ -387,6 +421,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         session,
         firebaseUser,
         authLoading,
+        authRestored,
         verifyingAdmin,
         authError,
         clearAuthError,

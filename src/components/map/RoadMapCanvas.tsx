@@ -222,11 +222,9 @@ export const RoadMapCanvas: React.FC<RoadMapCanvasProps> = ({
     groups.devices.clearLayers();
     groups.sos.clearLayers();
 
-    // Only verified potholes with reliable GPS coordinates appear as confirmed pothole markers
-    const activePotholes = potholes.filter(
-      (p) =>
-        p.isVerifiedForMap !== false &&
-        hasValidMapCoordinates(p.lat, p.lng, p.dataSource, p.hasReliableGps)
+    // Display all potholes with valid, reliable GPS coordinates regardless of verification status
+    const activePotholes = potholes.filter((p) =>
+      hasValidMapCoordinates(p.lat, p.lng, p.dataSource, p.hasReliableGps)
     );
     const activeClusters = clusters.filter((c) =>
       hasValidMapCoordinates(c.centroidLat, c.centroidLng, c.dataSource)

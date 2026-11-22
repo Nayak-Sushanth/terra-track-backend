@@ -106,7 +106,7 @@ export default function App() {
     setSelectedMapPotholeId((prev) => {
       if (prev && liveWorkspace.potholes.some((p) => p.id === prev)) return prev;
       const firstGeolocated = liveWorkspace.potholes.find(
-        (p) => p.isVerifiedForMap !== false && p.hasReliableGps !== false && p.lat !== null && p.lng !== null
+        (p) => p.hasReliableGps !== false && p.lat !== null && p.lng !== null
       );
       return firstGeolocated?.id ?? liveWorkspace.potholes[0]?.id ?? null;
     });
@@ -628,7 +628,7 @@ export default function App() {
     return <LoginPage />;
   }
 
-  if (loadingWorkspace || !workspace) {
+  if (loadingWorkspace) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-[#E9EDF3] p-4">
         <div className="neu-card px-8 py-7 text-center max-w-sm w-full">
@@ -647,6 +647,54 @@ export default function App() {
             {isLiveFirebaseMode
               ? 'Attaching real-time listeners to terra-track-53004 (asia-south1)...'
               : `Authorized as ${session.role} (Demo Mode)`}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!workspace) {
+    const errorDetail =
+      (isLiveFirebaseMode && liveSyncState.lastError) ||
+      'Unable to load live Cloud Firestore data. Verify Firebase authentication, Firestore security rules, and network connectivity.';
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#E9EDF3] p-4">
+        <div className="neu-card px-8 py-7 max-w-md w-full space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="neu-inset-sm flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-[#DC2626]">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-[16px] font-bold text-[#17243A]">
+                {isLiveFirebaseMode
+                  ? 'Cloud Firestore Sync Unavailable'
+                  : 'Workspace Unavailable'}
+              </div>
+              <div className="font-mono text-[11px] text-[#718096]">
+                Project terra-track-53004 · asia-south1 · (default)
+              </div>
+            </div>
+          </div>
+          <div className="neu-sos-panel p-3.5 text-[12px] text-[#991B1B] font-mono">
+            {errorDetail}
+          </div>
+          <div className="flex items-center gap-2.5 pt-1">
+            {isLiveFirebaseMode && (
+              <button
+                type="button"
+                onClick={handleReconnectFirestore}
+                className="neu-btn-primary h-9.5 flex-1 text-[12px] font-semibold"
+              >
+                Retry Firestore Sync
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={logout}
+              className="neu-btn h-9.5 px-4 text-[12px] font-semibold text-[#52627A]"
+            >
+              Sign Out
+            </button>
           </div>
         </div>
       </div>

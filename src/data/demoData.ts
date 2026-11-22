@@ -1261,7 +1261,13 @@ export const INITIAL_USERS: MunicipalUser[] = [
 ];
 
 export function createInitialDemoWorkspace(): TerraWorkspaceState {
-  const settings = { ...DEFAULT_SYSTEM_SETTINGS };
+  const settings = {
+    ...DEFAULT_SYSTEM_SETTINGS,
+    demoModeEnabled: true,
+    municipalityName: 'Metro Public Works Authority (Demo Sandbox)',
+    coordinateReferenceLabel: 'Simulated Municipal Grid (WGS84 / OSM)',
+    firebaseStatus: 'DEMO MODE (Simulated Sandbox — Live Firestore Isolated)',
+  };
 
   // Build pothole records first with initial priority scores
   let potholes: PotholeRecord[] = RAW_POTHOLE_SEEDS.map((seed) => {

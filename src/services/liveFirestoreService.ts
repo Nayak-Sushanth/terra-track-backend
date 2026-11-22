@@ -14,7 +14,7 @@ import {
   FIRESTORE_COLLECTIONS,
   OperationType,
 } from '../config/firebase';
-import { BACKEND_API_BASE_URL } from '../api/backendAdminApi';
+import { ESP32_DETECTIONS_ENDPOINT } from '../api/backendAdminApi';
 import { DEFAULT_PRIORITY_WEIGHTS } from '../config/appConfig';
 import { generateH3HexGrid, runDbscanClustering } from '../utilities/spatialEngine';
 import { calculatePotholePriority } from '../utilities/priorityEngine';
@@ -754,14 +754,12 @@ export function mapPotholeDoc(docId: string, data: DocumentData): PotholeRecord 
 
   // Strictly read ONLY the actual Firestore `verified` boolean.
   // Never infer verification from confidence, severity, status, or classification.
+  // Map display depends solely on valid GPS coordinates, never verification status.
   const verified: boolean | null = pickBoolean(
     rec,
     ['verified'],
     ['detection', 'metadata', 'backendMetadata']
   );
-
-  // Only potholes with reliable GPS coordinates may be plotted on the map
-  const isVerifiedForMap = hasReliableGps;
 
   return {
     id: pickString(rec, ['pothole_id', 'potholeId', 'id']) ?? docId,
@@ -774,7 +772,6 @@ export function mapPotholeDoc(docId: string, data: DocumentData): PotholeRecord 
     lng,
     hasReliableGps,
     verified,
-    isVerifiedForMap,
     h3Index: pickString(rec, ['h3_index', 'h3Index']),
     clusterId: pickString(rec, ['cluster_id', 'clusterId']),
     classification: 'Pothole',
@@ -1514,7 +1511,7 @@ export function buildLiveWorkspaceFromSnapshots(
       slaCriticalHours: 24,
       slaHighHours: 72,
       priorityWeights: DEFAULT_PRIORITY_WEIGHTS,
-      esp32ApiEndpoint: BACKEND_API_BASE_URL,
+      esp32ApiEndpoint: ESP32_DETECTIONS_ENDPOINT,
       firebaseStatus: 'Project terra-track-53004 (asia-south1 · (default) · Real-Time onSnapshot)',
     },
     liveMetrics,
@@ -1958,7 +1955,16 @@ export function subscribeToLiveFirestoreWorkspace(params: {
       return;
     }
 
-    // Wait for valid authenticated Firebase user before attaching live Firestore listeners
+    // Ensure Firebase Auth has finished restoring persisted user session before subscribing
+    if (typeof init.auth?.authStateReady === 'function') {
+      try {
+        await init.auth.authStateReady();
+      } catch {
+        // Handled cleanly by currentUser check below
+      }
+      if (cancelled) return;
+    }
+
     if (!init.auth?.currentUser) {
       authMissing = true;
       const msg =

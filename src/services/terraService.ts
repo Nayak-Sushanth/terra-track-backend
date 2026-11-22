@@ -1,35 +1,36 @@
 import { terraApiClient } from '../api/client';
-import { getFirebaseReadinessSummary } from '../config/firebase';
 import { createInitialDemoWorkspace } from '../data/demoData';
 import type { TerraWorkspaceState } from '../types';
 
 /**
- * Unified TERRA Track Data Service
+ * Isolated DEMO MODE Workspace Loader
  *
- * Bridges the authenticated Express backend (with RBAC enforcement) and
- * Firebase Cloud Firestore readiness while preserving isolated DEMO MODE.
+ * Production sessions read exclusively from real-time Cloud Firestore via
+ * `useFirestoreWorkspace` / `liveFirestoreService.ts` and never call this loader.
  */
-
 export async function loadInitialWorkspace(): Promise<{
   data: TerraWorkspaceState;
   backendConnected: boolean;
   persistenceLabel: string;
 }> {
-  const readiness = getFirebaseReadinessSummary();
   try {
     const data = await terraApiClient.getWorkspace();
     return {
-      data,
+      data: {
+        ...data,
+        settings: {
+          ...data.settings,
+          demoModeEnabled: true,
+        },
+      },
       backendConnected: true,
-      persistenceLabel: readiness.firestoreConfigured
-        ? 'Firebase Firestore + Node.js RBAC API'
-        : 'Node.js API (DEMO MODE)',
+      persistenceLabel: 'Isolated Demo Sandbox API',
     };
   } catch {
     return {
       data: createInitialDemoWorkspace(),
       backendConnected: false,
-      persistenceLabel: 'Local Demo Fallback',
+      persistenceLabel: 'Isolated Local Demo Sandbox',
     };
   }
 }

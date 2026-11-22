@@ -1,49 +1,12 @@
-import type { UserRole } from '../types';
+import type { UserRole } from '../types/index.ts';
 
 /**
  * TERRA Track External Node.js Backend API Integration
  *
- * Production/tunnel HTTPS backend: https://kde-planes-sponsorship-motorcycle.trycloudflare.com
- * Can be overridden with a non-localhost HTTPS VITE_BACKEND_API_URL environment variable.
+ * Single production HTTPS backend base URL: https://terra-track-api.onrender.com
  */
-const CLOUDFLARE_BACKEND_API_URL = 'https://kde-planes-sponsorship-motorcycle.trycloudflare.com';
-
-function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return (
-    host === 'localhost' ||
-    host === '127.0.0.1' ||
-    host === '0.0.0.0' ||
-    host === '::1' ||
-    host === '[::1]' ||
-    host.endsWith('.localhost')
-  );
-}
-
-function resolveBackendApiBaseUrl(): string {
-  const rawEnvUrl =
-    typeof import.meta !== 'undefined' && typeof import.meta.env?.VITE_BACKEND_API_URL === 'string'
-      ? import.meta.env.VITE_BACKEND_API_URL.trim()
-      : '';
-
-  if (rawEnvUrl) {
-    try {
-      const parsed = new URL(rawEnvUrl);
-      if (
-        (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
-        !isLoopbackHost(parsed.hostname)
-      ) {
-        return rawEnvUrl.replace(/\/+$/, '');
-      }
-    } catch {
-      // Ignore malformed env value and use configured Cloudflare HTTPS endpoint
-    }
-  }
-
-  return CLOUDFLARE_BACKEND_API_URL;
-}
-
-export const BACKEND_API_BASE_URL = resolveBackendApiBaseUrl();
+export const BACKEND_API_BASE_URL = 'https://terra-track-api.onrender.com';
+export const ESP32_DETECTIONS_ENDPOINT = `${BACKEND_API_BASE_URL}/api/device/detections`;
 
 export type BackendAuthErrorCode =
   | 'UNAUTHORIZED'
@@ -120,7 +83,7 @@ export async function fetchAdminProfile(
 
   const endpoint = `${BACKEND_API_BASE_URL}/api/admin/profile`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
   let response: Response;
   try {
@@ -139,8 +102,8 @@ export async function fetchAdminProfile(
       'NETWORK_ERROR',
       null,
       isAbort
-        ? `Backend connection error: Request to ${BACKEND_API_BASE_URL} timed out. The HTTPS backend endpoint did not respond in time.`
-        : `Backend connection error: Unable to reach the TERRA Track HTTPS backend at ${BACKEND_API_BASE_URL}. Please confirm the Cloudflare tunnel and Node.js server are online and allow CORS from this origin.`
+        ? `Backend connection error: Request to ${BACKEND_API_BASE_URL} timed out after 30s. If the Render service is waking from cold start, please retry in a few seconds.`
+        : `Backend connection error: Unable to reach the TERRA Track HTTPS backend at ${BACKEND_API_BASE_URL}. Please confirm the backend is online and allows CORS from this origin.`
     );
   } finally {
     clearTimeout(timeoutId);
@@ -192,7 +155,7 @@ export async function fetchAdminProfile(
       throw new BackendAuthError(
         'SERVER_ERROR',
         response.status,
-        `Backend service unavailable (HTTP ${response.status}) at ${BACKEND_API_BASE_URL}. Please verify the Node.js server and Cloudflare tunnel are running.`
+        `Backend service unavailable (HTTP ${response.status}) at ${BACKEND_API_BASE_URL}. Please verify the Render backend service is running.`
       );
     }
     throw new BackendAuthError(
